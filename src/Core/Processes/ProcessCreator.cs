@@ -72,10 +72,24 @@ namespace VsChromium.Core.Processes {
         var lastError = 0;
         var success = NativeMethods.CreateProcess(null, stringBuilder, null, null, true, processCreationFlags,
                                                  environmentPtr, workingDirectory, startupInfo, processInformation);
-        Logger.LogInfo("CreateProcessWithStartInfo: CreateProcess result: Success={0}-LastError={1}.", success, Marshal.GetLastWin32Error());
-        if (!success) {
+        lastError = Marshal.GetLastWin32Error();
+        Logger.LogInfo("CreateProcessWithStartInfo: CreateProcess result: Success={0}-LastError={1}.", success, lastError);
+
+        // If the calling process is running inside a restrictive Job object, CREATE_BREAKAWAY_FROM_JOB is forbidden and
+        // CreateProcess returns ERROR_ACCESS_DENIED (5). In that case, retry once without the breakaway flag.
+        if (!success && lastError == 5 && (processCreationFlags & ProcessCreationFlags.CREATE_BREAKAWAY_FROM_JOB) != 0) {
+          Logger.LogWarn(
+            "CreateProcess failed with Access Denied when using CREATE_BREAKAWAY_FROM_JOB. Retrying without breakaway. " +
+            "(This typically happens when the parent process is running inside a restrictive Job object.)");
+
+          processCreationFlags &= ~ProcessCreationFlags.CREATE_BREAKAWAY_FROM_JOB;
+          processInformation = new PROCESS_INFORMATION();
+          success = NativeMethods.CreateProcess(null, stringBuilder, null, null, true, processCreationFlags,
+                                               environmentPtr, workingDirectory, startupInfo, processInformation);
           lastError = Marshal.GetLastWin32Error();
+          Logger.LogInfo("CreateProcessWithStartInfo: CreateProcess retry result: Success={0}-LastError={1}.", success, lastError);
         }
+
         // Assign safe handles as quickly as possible to avoid leaks.
         var safeProcessHandle = new SafeProcessHandle(processInformation.hProcess);
         var safeThreadHandle = new SafeProcessHandle(processInformation.hThread);
